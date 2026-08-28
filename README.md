@@ -66,6 +66,12 @@ Copy [`plugin.js`](plugin.js) to Hermes’ desktop plugin directory:
 ~/.hermes/desktop-plugins/hermes-rss/plugin.js
 ```
 
+On Windows:
+
+```text
+%USERPROFILE%\.hermes\desktop-plugins\hermes-rss\plugin.js
+```
+
 Open Hermes and choose **RSS** in the sidebar. If it is missing, use **Cmd+K** (**Ctrl+K** on Windows) → **Reload desktop plugins**. Restart Hermes after replacing the file if an already-open reader keeps the old plugin loaded.
 
 Add a feed URL and start reading. The same `plugin.js` file is both the source and the installable artifact.
@@ -91,9 +97,9 @@ Your subscriptions, articles, read state, saved stories, and summaries live in t
 
 ## Compatibility
 
-Hermes RSS uses the desktop plugin SDK and the standard Hermes gateway methods. Feed refreshes use the host’s POSIX command line tools (`curl`, `dig`, `gzip`, `base64`, and related utilities).
+Hermes RSS uses the desktop plugin SDK and the standard Hermes gateway methods. Feed refreshes run on the connected gateway with host-native tools: `curl`, gzip, and a DNS lookup on macOS and Linux (`dig` or `getent`), and `curl.exe` plus PowerShell on Windows.
 
-It is tested on macOS with Hermes Desktop. Windows and older Hermes versions are not certified yet.
+It is tested on macOS with Hermes Desktop. Windows and Linux use the same fetch flow and the same private-network checks.
 
 ## Limits
 

@@ -467,9 +467,34 @@ function startAutoRefresh(ctx, host2, options = {}) {
 }
 
 // src/feed-transport.mjs
-var shellQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+var posixQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+var cmdQuote = (value) => `"${String(value).replaceAll('"', '""')}"`;
+var families = /* @__PURE__ */ new Map();
 var caches = /* @__PURE__ */ new Map();
 var pendingFetches = /* @__PURE__ */ new Map();
+function powershellSingle(value) {
+  if (/['\r\n]/.test(value))
+    throw new Error("Could not create a private RSS download cache.");
+  return `'${value}'`;
+}
+function ipv4Tokens(text) {
+  return text.split(/\s+/).filter((v) => /^\d+(\.\d+){3}$/.test(v));
+}
+function publicAddresses(text) {
+  const addresses = ipv4Tokens(text);
+  if (!addresses.length) return null;
+  if (addresses.some((ip) => !publicIPv4(ip)))
+    throw new Error(
+      "Feed host must resolve to a public IPv4 address. Private networks are blocked."
+    );
+  return addresses;
+}
+function isPosixCache(directory) {
+  return /^\/tmp\/hermes-rss\.[a-zA-Z0-9]{8}$/.test(directory);
+}
+function isWindowsCache(directory) {
+  return /^[A-Za-z]:\\(?:[^<>:"/|?*'\r\n]+\\)*hermes-rss\.[a-zA-Z0-9]{8}$/.test(directory);
+}
 function publicUrl(raw) {
   const url = new URL(raw);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.href.length > 2048 || url.port && !["80", "443"].includes(url.port) || !/^[a-z0-9.-]+$/i.test(url.hostname) || !url.hostname.includes(".") || /(^|\.)(localhost|local|internal)$/.test(url.hostname))
@@ -498,39 +523,111 @@ async function fetchFeed(host2, rawUrl) {
     if (pendingFetches.get(owner) === work) pendingFetches.delete(owner);
   }
 }
-async function fetchFeedNow(host2, rawUrl, route) {
-  const run = async (command) => {
-    assertOwner(host2, route);
-    const result = await host2.requestProfile(route, "shell.exec", { command });
-    assertOwner(host2, route);
-    if (result.code !== 0)
-      throw new Error(
-        `Feed command failed: ${(result.stderr || "This gateway needs curl, dig, gzip, base64 and standard POSIX utilities.").slice(0, 350)}`
-      );
-    return result.stdout.trim();
-  };
-  const owner = JSON.stringify([route.connectionId, route.profile]);
-  let directory = caches.get(owner);
-  if (!directory) {
-    directory = await run("mktemp -d /tmp/hermes-rss.XXXXXXXX");
-    if (!/^\/tmp\/hermes-rss\.[a-zA-Z0-9]{8}$/.test(directory))
-      throw new Error("Could not create a private RSS download cache.");
-    caches.set(owner, directory);
-  }
-  const file = shellQuote(`${directory}/feed`);
-  let url = publicUrl(rawUrl), success = false;
-  for (let redirect = 0; redirect < 4; redirect++) {
-    const dns = await run(
-      `dig +short +time=3 +tries=1 A ${shellQuote(url.hostname)}`
+async function resolvePublicIPv4(run, family, hostname) {
+  if (family === "windows") {
+    const addresses = publicAddresses(
+      await run(
+        `powershell -NoProfile -NonInteractive "Resolve-DnsName -Name ${powershellSingle(hostname)} -Type A | Where-Object { $_.Type -eq 'A' } | Select-Object -ExpandProperty IPAddress"`
+      )
     );
-    const addresses = dns.split(/\s+/).filter((v) => /^\d+(\.\d+){3}$/.test(v));
-    if (!addresses.length || addresses.some((ip) => !publicIPv4(ip)))
+    if (!addresses)
       throw new Error(
         "Feed host must resolve to a public IPv4 address. Private networks are blocked."
       );
+    return addresses;
+  }
+  const name = posixQuote(hostname);
+  const lookups = [
+    `dig +short +time=3 +tries=1 A ${name}`,
+    `getent ahostsv4 ${name}`,
+    `getent hosts ${name}`
+  ];
+  for (let i = 0; i < lookups.length; i++) {
+    const addresses = publicAddresses(await run(lookups[i], i < lookups.length - 1));
+    if (addresses) return addresses;
+  }
+  throw new Error(
+    "Feed host must resolve to a public IPv4 address. Private networks are blocked."
+  );
+}
+async function readPackedFeed(run, family, directory, feedPath) {
+  if (family === "windows") {
+    const gzPath = `${directory}\\feed.gz`;
+    const b64Path = `${directory}\\feed.b64`;
+    await run(
+      `powershell -NoProfile -NonInteractive "Add-Type -AssemblyName System.IO.Compression; $in=[IO.File]::OpenRead(${powershellSingle(feedPath)}); $out=[IO.File]::Create(${powershellSingle(gzPath)}); $gzs=New-Object IO.Compression.GZipStream($out,[IO.Compression.CompressionMode]::Compress); $in.CopyTo($gzs); $gzs.Dispose(); $in.Dispose(); [IO.File]::WriteAllText(${powershellSingle(b64Path)},[Convert]::ToBase64String([IO.File]::ReadAllBytes(${powershellSingle(gzPath)})))"`
+    );
+    const length = Number(
+      await run(
+        `powershell -NoProfile -NonInteractive "[IO.File]::ReadAllText(${powershellSingle(b64Path)}).Length"`
+      )
+    );
+    if (!Number.isInteger(length) || length < 1 || length > 6e5)
+      throw new Error("Feed exceeds the compressed transport limit.");
+    let packed = "";
+    for (let offset = 0; offset < length; offset += 3500) {
+      const count = Math.min(3500, length - offset);
+      packed += await run(
+        `powershell -NoProfile -NonInteractive "[IO.File]::ReadAllText(${powershellSingle(b64Path)}).Substring(${offset},${count})"`
+      );
+    }
+    return packed;
+  }
+  const file = posixQuote(feedPath);
+  const encoded = `gzip -c ${file} | base64 | tr -d '\\n'`;
+  const length = Number(await run(`${encoded} | wc -c`));
+  if (!Number.isInteger(length) || length < 1 || length > 6e5)
+    throw new Error("Feed exceeds the compressed transport limit.");
+  let packed = "";
+  for (let offset = 0; offset < length; offset += 3500)
+    packed += await run(
+      `${encoded} | cut -c ${offset + 1}-${Math.min(offset + 3500, length)}`
+    );
+  return packed;
+}
+async function fetchFeedNow(host2, rawUrl, route) {
+  const run = async (command, optional) => {
+    assertOwner(host2, route);
+    const result = await host2.requestProfile(route, "shell.exec", { command });
+    assertOwner(host2, route);
+    if (result.code !== 0) {
+      if (optional) return "";
+      throw new Error(
+        `Feed command failed: ${(result.stderr || "This gateway needs curl plus gzip and base64 tools. Windows uses curl.exe and PowerShell. Linux and macOS use POSIX utilities.").slice(0, 350)}`
+      );
+    }
+    return result.stdout.trim();
+  };
+  const owner = JSON.stringify([route.connectionId, route.profile]);
+  let family = families.get(owner);
+  if (!family) {
+    family = (await run("echo %OS%")) === "Windows_NT" ? "windows" : "posix";
+    families.set(owner, family);
+  }
+  let directory = caches.get(owner);
+  if (!directory) {
+    if (family === "windows") {
+      const temp = (await run("echo %TEMP%")).replace(/[\\/]+$/, "");
+      directory = `${temp}\\hermes-rss.${crypto.randomUUID().replaceAll("-", "").slice(0, 8)}`;
+      if (!isWindowsCache(directory))
+        throw new Error("Could not create a private RSS download cache.");
+      await run(`mkdir ${cmdQuote(directory)}`);
+    } else {
+      directory = await run("mktemp -d /tmp/hermes-rss.XXXXXXXX");
+      if (!isPosixCache(directory))
+        throw new Error("Could not create a private RSS download cache.");
+    }
+    caches.set(owner, directory);
+  }
+  const feedPath = family === "windows" ? `${directory}\\feed` : `${directory}/feed`;
+  const quote = family === "windows" ? cmdQuote : posixQuote;
+  const curl = family === "windows" ? "curl.exe" : "curl";
+  let url = publicUrl(rawUrl), success = false;
+  for (let redirect = 0; redirect < 4; redirect++) {
+    const addresses = await resolvePublicIPv4(run, family, url.hostname);
     const port = url.port || (url.protocol === "https:" ? "443" : "80");
     const info = await run(
-      `curl --disable --silent --show-error --noproxy '*' --proto '=http,https' --connect-timeout 8 --max-time 25 --max-filesize 2000000 --resolve ${shellQuote(`${url.hostname}:${port}:${addresses[0]}`)} --header 'Accept-Encoding: identity' --user-agent 'HermesRSS/0.2' --output ${file} --write-out '%{http_code} %{size_download} %{redirect_url}' --url ${shellQuote(url.href)}`
+      `${curl} --disable --silent --show-error --noproxy ${quote("*")} --proto ${quote("=http,https")} --connect-timeout 8 --max-time 25 --max-filesize 2000000 --resolve ${quote(`${url.hostname}:${port}:${addresses[0]}`)} --header ${quote("Accept-Encoding: identity")} --user-agent ${quote("HermesRSS/0.2")} --output ${quote(feedPath)} --write-out ${quote("%{http_code} %{size_download} %{redirect_url}")} --url ${quote(url.href)}`
     );
     const match = /^(\d{3}) ([0-9]+)(?: (.*))?$/.exec(info);
     if (!match) throw new Error("Invalid feed download response.");
@@ -545,15 +642,7 @@ async function fetchFeedNow(host2, rawUrl, route) {
     break;
   }
   if (!success) throw new Error("The feed redirects too many times.");
-  const encoded = `gzip -c ${file} | base64 | tr -d '\\n'`;
-  const length = Number(await run(`${encoded} | wc -c`));
-  if (!Number.isInteger(length) || length < 1 || length > 6e5)
-    throw new Error("Feed exceeds the compressed transport limit.");
-  let packed = "";
-  for (let offset = 0; offset < length; offset += 3500)
-    packed += await run(
-      `${encoded} | cut -c ${offset + 1}-${Math.min(offset + 3500, length)}`
-    );
+  const packed = await readPackedFeed(run, family, directory, feedPath);
   const bytes = Uint8Array.from(atob(packed), (c) => c.charCodeAt(0));
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
   const decoded = new Uint8Array(await new Response(stream).arrayBuffer());
