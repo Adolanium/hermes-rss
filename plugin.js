@@ -498,9 +498,58 @@ async function fetchFeed(host2, rawUrl) {
     if (pendingFetches.get(owner) === work) pendingFetches.delete(owner);
   }
 }
+let windowsTempCache = "";
+async function windowsTemp(host2, route) {
+  if (!windowsTempCache) {
+    const res = await host2.requestProfile(route, "shell.exec", { command: "powershell -NoProfile Write-Output $env:TEMP" });
+    const dir = (res.stdout || "").trim();
+    if (!/^[A-Za-z]:[\\/]/.test(dir)) throw new Error("Could not resolve the Windows temp directory.");
+    windowsTempCache = dir;
+  }
+  return windowsTempCache;
+}
+async function windowsWrite(winPath, content) {
+  const unix = winPath.replace(/\\/g, "/");
+  if (window.hermesDesktop?.writeTextFile) {
+    await window.hermesDesktop.writeTextFile(unix, content);
+    return;
+  }
+  const connection = await window.hermesDesktop.getConnection("");
+  const base = (connection?.connection?.baseUrl || "").replace(/\/+$/, "");
+  const headers = { "content-type": "application/json" };
+  if (connection?.connection?.token) headers.authorization = `Bearer ${connection.connection.token}`;
+  if (connection?.connection?.sessionToken) headers["x-hermes-session-token"] = connection.connection.sessionToken;
+  const response = await fetch(`${base}/api/fs/write-text`, { method: "POST", headers, body: JSON.stringify({ path: unix, content }) });
+  if (!response.ok) throw new Error(`Could not stage the feed script (${response.status}).`);
+}
+async function runWindows(command) {
+  const temp = await windowsTemp(host2, route);
+  const workspace = `${temp}\\hermes-rss`;
+  const file = `${workspace}\\refresh-${scriptSeq++}.sh`;
+  const msysTemp = temp.replace(/\\/g, "/").replace(/^([A-Za-z]):/, (_m, drive) => `/${drive.toLowerCase()}`);
+  const body = `#!/bin/bash\nexport PATH="$HOME/bin:$PATH"\nset -o pipefail\n`
+    + command.replace(/\/tmp\//g, `${msysTemp}/tmp/`).replace(/\\/g, "/");
+  await windowsWrite(file, body);
+  const result = await host2.requestProfile(route, "shell.exec", { command: `bash "${file}"` });
+  if (result.code !== 0)
+    throw new Error(
+      `Feed command failed: ${(result.stderr || "Windows feed refresh needs Git Bash (bash, curl, gzip, base64) and Windows' built-in nslookup, reachable via a dig shim such as https://github.com/Adolanium/hermes-rss/issues — see README Windows notes.").slice(0, 350)}`
+    );
+  return result.stdout.trim();
+}
+async function windowsWorkspace() {
+  const temp = await windowsTemp(host2, route);
+  const workspace = `${temp}\\hermes-rss`;
+  await runWindows(`mkdir -p "${workspace.replace(/\\/g, "/")}"`);
+  return workspace;
+}
+
 async function fetchFeedNow(host2, rawUrl, route) {
+  const isWin = /Windows NT/.test(navigator.userAgent);
+  let scriptSeq = 0;
   const run = async (command) => {
     assertOwner(host2, route);
+    if (isWin) return await runWindows(command);
     const result = await host2.requestProfile(route, "shell.exec", { command });
     assertOwner(host2, route);
     if (result.code !== 0)
@@ -512,8 +561,8 @@ async function fetchFeedNow(host2, rawUrl, route) {
   const owner = JSON.stringify([route.connectionId, route.profile]);
   let directory = caches.get(owner);
   if (!directory) {
-    directory = await run("mktemp -d /tmp/hermes-rss.XXXXXXXX");
-    if (!/^\/tmp\/hermes-rss\.[a-zA-Z0-9]{8}$/.test(directory))
+    directory = isWin ? await windowsWorkspace() : await run("mktemp -d /tmp/hermes-rss.XXXXXXXX");
+    if (!directory || !/^(\/tmp\/hermes-rss\.[a-zA-Z0-9]{8}$|[A-Za-z]:[\\/]hermes-rss([\\/].*)?$)/.test(directory))
       throw new Error("Could not create a private RSS download cache.");
     caches.set(owner, directory);
   }

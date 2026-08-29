@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# dig shim for the hermes-rss Windows feed transport.
+# Windows has no dig, but ships nslookup; this wraps it for the one call shape
+# the plugin makes:  dig +short +time=N +tries=N A <hostname>
+# A records only — the plugin requires IPv4 to pin curl --resolve against, and
+# whatever comes back still passes the plugin's own private-address (SSRF) gate.
+#
+# Install: copy this file to  %USERPROFILE%\bin\dig  (no extension) and make
+# sure %USERPROFILE%\bin is on PATH for Git Bash.
+host=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    +*|-*) ;;                                # dig flags: +short, +time=3, ...
+    A|AAAA) ;;                               # address-family token
+    *=*|*/*) ;;                              # key=value or path-shaped: not a host
+    *) host="$1" ;;
+  esac
+  shift
+done
+[ -n "$host" ] || exit 2
+export MSYS_NO_PATHCONV=1   # keep "-type=A" from being mangled into a path
+system32=$(case "$OS" in Windows_NT) echo "/c/Windows/System32" ;; *) echo "$WINDIR/System32" ;; esac)
+"$system32/nslookup.exe" -type=A "$host" 2>/dev/null | tr -d '\r' \
+  | awk -v RS="" -v ORS="\n" '
+      NR == 1 { next }                          # skip the "Server:/Address:" block
+      {
+        n = split($0, lines, /\n/)
+        for (i = 1; i <= n; i++) {
+          line = lines[i]
+          gsub(/\t/, " ", line)
+          if (line ~ /^(Address|Addresses):[ ]/) {
+            sub(/^[^:]+:[ ]*/, "", line)
+            split(line, parts, " ")
+            for (j in parts) if (parts[j] ~ /^([0-9]{1,3}\.){3}[0-9]{1,3}$/) print parts[j]
+          }
+        }
+      }
+    '

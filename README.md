@@ -93,7 +93,13 @@ Your subscriptions, articles, read state, saved stories, and summaries live in t
 
 Hermes RSS uses the desktop plugin SDK and the standard Hermes gateway methods. Feed refreshes use the host’s POSIX command line tools (`curl`, `dig`, `gzip`, `base64`, and related utilities).
 
-It is tested on macOS with Hermes Desktop. Windows and older Hermes versions are not certified yet.
+**macOS** is tested and certified. **Windows** is supported through a small compatibility transport in `plugin.js`:
+
+- The Hermes desktop gateway executes `shell.exec` through `cmd.exe`, which cannot run the plugin's POSIX command chains. On Windows the plugin writes each refresh script to `%TEMP%\hermes-rss\` and executes it as `bash "<script>"` (Git Bash, included with Git for Windows). Script staging uses the desktop file bridge when present, otherwise the gateway's `POST /api/fs/write-text` route.
+- Windows ships no `dig`. Copy [`windows/dig`](windows/dig) to `%USERPROFILE%\bin\dig` and ensure that directory is on your Git Bash `PATH` (the plugin prepends `$HOME/bin` automatically). The wrapper answers from the built-in `nslookup.exe` and returns A records only, so the plugin's private-address (SSRF) rejection keeps working unchanged. Verify with `bash windows/test-dig.sh`.
+- `curl`, `gzip`, and `base64` ship with Git for Windows; no extra installs are needed.
+
+Older Hermes versions and Linux are not certified yet.
 
 ## Limits
 
