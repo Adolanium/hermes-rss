@@ -755,7 +755,8 @@ var styles = `
 .hermes-rss .rss-feed-row{display:flex;align-items:center;gap:2px}.hermes-rss .rss-nav .rss-feed-open{flex:1;min-width:0}.hermes-rss .rss-nav .rss-unsubscribe{width:26px;flex-shrink:0;padding:7px;justify-content:center;color:var(--ui-text-tertiary)}
 .hermes-rss .rss-feed-info{display:grid;gap:2px;min-width:0}.hermes-rss .rss-feed-status{font-size:10px;color:var(--ui-text-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.hermes-rss .rss-feed-status-error{color:var(--ui-danger,var(--ui-text-secondary))}
 .hermes-rss .rss-feed-header-error{margin-top:8px;color:var(--ui-danger,var(--ui-text-secondary))}
-.hermes-rss .rss-settings{padding:18px 28px;border-bottom:1px solid var(--ui-stroke-secondary);display:grid;gap:14px}.hermes-rss .rss-settings h2{font-size:16px;margin:0}.hermes-rss .rss-setting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.hermes-rss .rss-setting input[type=number]{width:90px}.hermes-rss .rss-setting input[type=checkbox]{accent-color:var(--ui-accent)}
+.hermes-rss .rss-settings{padding:18px 28px;border-bottom:1px solid var(--ui-stroke-secondary);display:grid;gap:16px}.hermes-rss .rss-settings h2{font-size:16px;margin:0}.hermes-rss .rss-setting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.hermes-rss .rss-setting input[type=number]{width:90px}.hermes-rss .rss-setting input[type=checkbox]{accent-color:var(--ui-accent)}
+.hermes-rss .rss-settings-library{display:grid;gap:12px;padding-top:14px;border-top:1px solid var(--ui-stroke-secondary)}
 .hermes-rss .rss-confirm{padding:16px 28px;border-bottom:1px solid var(--ui-stroke-secondary)}.hermes-rss .rss-confirm h2{font-size:16px}.hermes-rss .rss-confirm .rss-tools{margin-top:12px}
 @media(max-width:1000px){.hermes-rss .rss-layout{grid-template-columns:145px minmax(210px,.85fr) minmax(260px,1fr)}.hermes-rss .rss-detail{padding:22px 20px}.hermes-rss .rss-top{padding:20px}}
 @media(max-width:760px){.hermes-rss .rss-layout{grid-template-columns:125px 1fr}.hermes-rss .rss-detail{display:none}.hermes-rss .rss-layout.has-selection .rss-list{display:none}.hermes-rss .rss-layout.has-selection .rss-detail{display:block}.hermes-rss .rss-top{align-items:flex-start}.hermes-rss .rss-top p{display:none}}
@@ -1066,19 +1067,29 @@ function ReaderProfile({ ctx, owner, profile }) {
       jsx("span", { children: busy || notice }),
       notice && jsx("button", { type: "button", className: "rss-notice-close", "aria-label": "Dismiss notification", onClick: () => setNotice(""), children: "×" })
     ] }),
-    settingsOpen && jsxs("form", { className: "rss-settings", "aria-label": "Reader settings", onSubmit: saveSettings, children: [
-      jsx("h2", { children: "Reader settings" }),
-      jsxs("label", { className: "rss-setting", children: [
-        jsx("input", { type: "checkbox", checked: draft.autoRefresh, disabled: typeof ctx.onDispose !== "function", onChange: event => setDraft({ ...draft, autoRefresh: event.target.checked }) }),
-        "Automatically refresh feeds"
+    settingsOpen && jsxs("div", { className: "rss-settings", children: [
+      jsxs("form", { className: "rss-stack", "aria-label": "Reader settings", onSubmit: saveSettings, children: [
+        jsx("h2", { children: "Reader settings" }),
+        jsxs("label", { className: "rss-setting", children: [
+          jsx("input", { type: "checkbox", checked: draft.autoRefresh, disabled: typeof ctx.onDispose !== "function", onChange: event => setDraft({ ...draft, autoRefresh: event.target.checked }) }),
+          "Automatically refresh feeds"
+        ] }),
+        jsxs("label", { className: "rss-setting", children: ["Every", jsx(Input, { type: "number", min: 1, max: 1440, step: 1, required: true, "aria-label": "Refresh interval in minutes", value: draft.refreshMinutes, onChange: event => setDraft({ ...draft, refreshMinutes: event.target.value }) }), "minutes"] }),
+        jsx("p", { className: "rss-muted rss-small", children: typeof ctx.onDispose === "function" ? "Refreshes the active profile while Hermes is open, even outside RSS. No AI calls run automatically. Settings apply to this profile." : "This Hermes version needs an SDK update for background refresh. Manual refresh still works." }),
+        jsxs("label", { className: "rss-setting", children: [
+          jsx("input", { type: "checkbox", checked: draft.markReadOnOpen, onChange: event => setDraft({ ...draft, markReadOnOpen: event.target.checked }) }),
+          "Mark articles as read when opened"
+        ] }),
+        jsxs("div", { className: "rss-tools", children: [jsx(Button, { type: "submit", children: "Save settings" }), jsx(Button, { type: "button", variant: "ghost", onClick: () => setSettingsOpen(false), children: "Cancel" })] })
       ] }),
-      jsxs("label", { className: "rss-setting", children: ["Every", jsx(Input, { type: "number", min: 1, max: 1440, step: 1, required: true, "aria-label": "Refresh interval in minutes", value: draft.refreshMinutes, onChange: event => setDraft({ ...draft, refreshMinutes: event.target.value }) }), "minutes"] }),
-      jsx("p", { className: "rss-muted rss-small", children: typeof ctx.onDispose === "function" ? "Refreshes the active profile while Hermes is open, even outside RSS. No AI calls run automatically. Settings apply to this profile." : "This Hermes version needs an SDK update for background refresh. Manual refresh still works." }),
-      jsxs("label", { className: "rss-setting", children: [
-        jsx("input", { type: "checkbox", checked: draft.markReadOnOpen, onChange: event => setDraft({ ...draft, markReadOnOpen: event.target.checked }) }),
-        "Mark articles as read when opened"
-      ] }),
-      jsxs("div", { className: "rss-tools", children: [jsx(Button, { type: "submit", children: "Save settings" }), jsx(Button, { type: "button", variant: "ghost", onClick: () => setSettingsOpen(false), children: "Cancel" })] })
+      jsxs("div", { className: "rss-settings-library", "aria-label": "Library", children: [
+        jsx("h2", { children: "Library" }),
+        jsx("p", { className: "rss-muted rss-small", children: "Import or export subscriptions as OPML. This does not change refresh settings." }),
+        jsxs("div", { className: "rss-tools", children: [
+          jsx(Button, { type: "button", disabled, onClick: chooseFile, children: "Import OPML" }),
+          jsx(Button, { type: "button", variant: "ghost", disabled: disabled || !feeds.data?.length, onClick: exportFeeds, children: "Export OPML" })
+        ] })
+      ] })
     ] }),
     feedToRemove && jsxs("div", { className: "rss-confirm", role: "alertdialog", ref: confirmation, tabIndex: -1, "aria-labelledby": "rss-unsubscribe-title", children: [
       jsx("h2", { id: "rss-unsubscribe-title", children: `Unsubscribe from ${feedToRemove.title}?` }),
@@ -1179,17 +1190,7 @@ function ReaderProfile({ ctx, owner, profile }) {
             ] }),
           jsx("button", { className: "rss-unsubscribe", disabled, title: "Unsubscribe", "aria-label": `Unsubscribe from ${feed.title}`, onClick: () => setFeedToRemove(feed), children: "×" })
         ] }, feed.id)),
-        !feeds.data?.length && /* @__PURE__ */ jsx("p", { className: "rss-muted rss-small", style: { padding: "0 10px" }, children: "Your feeds will appear here." }),
-        /* @__PURE__ */ jsx("div", { className: "rss-eyebrow", children: "Your library" }),
-        /* @__PURE__ */ jsx("button", { onClick: chooseFile, disabled, children: "Import OPML" }),
-        /* @__PURE__ */ jsx(
-          "button",
-          {
-            onClick: exportFeeds,
-            disabled: disabled || !feeds.data?.length,
-            children: "Export OPML"
-          }
-        )
+        !feeds.data?.length && /* @__PURE__ */ jsx("p", { className: "rss-muted rss-small", style: { padding: "0 10px" }, children: "Your feeds will appear here." })
       ] }),
       /* @__PURE__ */ jsxs("div", { className: "rss-list", children: [
         /* @__PURE__ */ jsxs("div", { className: "rss-list-head", children: [
@@ -1227,7 +1228,10 @@ function ReaderProfile({ ctx, owner, profile }) {
               title: feeds.data?.length ? "Nothing here yet" : "Make room for good reading",
               children: [
                 /* @__PURE__ */ jsx("p", { children: feeds.data?.length ? "Refresh your feeds, or try another filter." : "Subscribe to a feed or bring your existing subscriptions with OPML. Your library stays in this desktop, separated by Hermes profile." }),
-                /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdding(true), children: "Add your first feed" })
+                /* @__PURE__ */ jsxs("div", { className: "rss-tools", style: { justifyContent: "center" }, children: [
+                  /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdding(true), children: "Add your first feed" }),
+                  !feeds.data?.length && /* @__PURE__ */ jsx(Button, { variant: "ghost", disabled, onClick: chooseFile, children: "Import OPML" })
+                ] })
               ]
             }
           ),

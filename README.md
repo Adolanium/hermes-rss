@@ -48,7 +48,7 @@ Hermes RSS handles the small decisions that make a reader pleasant to return to:
 - Unsubscribe from a feed without losing stories you explicitly saved.
 - Refresh automatically every 1 to 1,440 minutes while Hermes is open, or refresh on demand.
 - Dismiss status notices after 10 seconds, or immediately with **×**.
-- Import and export OPML when you want to move a collection of feeds.
+- Import and export OPML from Settings when you want to move a collection of feeds. The empty library also offers import.
 
 The result is a library that gets quieter as you use it.
 
