@@ -11,7 +11,7 @@
   Hermes RSS turns one noisy stream into a calm reading room for the stories you mean to understand.
   Keep your reading library local, then bring in Hermes when a story deserves a summary, a conversation, or a source check.
 
-  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.0.1</sub>
+  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.0.2</sub>
 
   <br /><br />
 
