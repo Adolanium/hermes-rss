@@ -1,5 +1,5 @@
 // src/plugin.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Button,
   Input,
@@ -216,17 +216,20 @@ function mergeFeed(library, feedId, parsed) {
   feed.title = parsed.title;
   feed.error = null;
   feed.refreshed_at = (/* @__PURE__ */ new Date()).toISOString();
+  const byIdentity = new Map();
+  for (const article of library.articles) {
+    if (article.feed_id === feedId && !byIdentity.has(article.identity))
+      byIdentity.set(article.identity, article);
+  }
   let added = 0;
   for (const item of parsed.items) {
-    const old = library.articles.find(
-      (a) => a.feed_id === feedId && a.identity === item.identity
-    );
+    const old = byIdentity.get(item.identity);
     if (old) {
       if (old.body !== item.body || old.title !== item.title || old.url !== item.url)
         old.actions = old.actions.map((a) => ({ ...a, stale: true }));
       Object.assign(old, item, { feed_title: feed.title });
     } else {
-      library.articles.push({
+      const article = {
         ...item,
         id: crypto.randomUUID(),
         feed_id: feedId,
@@ -235,7 +238,9 @@ function mergeFeed(library, feedId, parsed) {
         is_saved: false,
         actions: [],
         received_at: (/* @__PURE__ */ new Date()).toISOString()
-      });
+      };
+      library.articles.push(article);
+      byIdentity.set(item.identity, article);
       added++;
     }
   }
@@ -293,11 +298,19 @@ function createLibrary(owner, fetchFeed2, transaction = transact) {
         return write((library) => add(library, body));
       if (method === "GET") {
         const library = await read();
+        if (library.feeds.length <= 1)
+          return library.feeds.map((f) => ({
+            ...f,
+            unread: library.articles.filter((a) => a.feed_id === f.id && !a.is_read).length
+          }));
+        const unread = new Map();
+        for (const article of library.articles) {
+          if (!article.is_read)
+            unread.set(article.feed_id, (unread.get(article.feed_id) || 0) + 1);
+        }
         return library.feeds.map((f) => ({
           ...f,
-          unread: library.articles.filter(
-            (a) => a.feed_id === f.id && !a.is_read
-          ).length
+          unread: unread.get(f.id) || 0
         }));
       }
       if (method === "DELETE")
@@ -800,24 +813,19 @@ function Reader({ ctx }) {
     ReaderProfile,
     {
       ctx,
-      owner: JSON.stringify([connection || "local", profile]),
-      profile
+      owner: JSON.stringify([connection || "local", profile])
     },
     JSON.stringify([connection || "local", profile])
   );
 }
-function ReaderProfile({ ctx, owner, profile }) {
+function ReaderProfile({ ctx, owner }) {
   const inFlight = useRef(false);
   const library = useMemo(
     () => createLibrary(owner, (url2) => fetchFeed(host, url2)),
     [owner]
   );
   const libraryRequest = async (...args) => {
-    const currentOwner = JSON.stringify([
-      host.state.connectionId?.get() || "local",
-      host.state.profile.get()
-    ]);
-    if (currentOwner !== owner)
+    if (currentOwner(host) !== owner)
       throw new Error(
         "Profile changed. Return to the original profile to continue."
       );
@@ -1112,8 +1120,7 @@ function ReaderProfile({ ctx, owner, profile }) {
             setFolder("");
             try {
               await libraryRequest(`/feeds/${feed.id}/refresh`, {
-                method: "POST",
-                timeoutMs: 35e3
+                method: "POST"
               });
             } catch (error) {
               setNotice(`Subscription saved. ${error.message}`);
