@@ -76,6 +76,16 @@ Open Hermes and choose **RSS** in the sidebar. If it is missing, use **Cmd+K** (
 
 Add a feed URL and start reading. The same `plugin.js` file is both the source and the installable artifact.
 
+## Search and mute rules
+
+Use **Filters** to exclude a phrase, save the current search, or add mute rules for all feeds or one subscription. Matching uses literal phrases in titles and feed text and ignores case.
+
+Saved searches appear in the sidebar and remember the search phrase, exclusion, feed, reading view, and **Show hidden** choice. Searches and rules are stored with the local library for the current connection and profile.
+
+Mute rules hide matching articles before pagination. They do not delete articles or change read and saved state. **Show hidden articles** temporarily bypasses mute rules; explicit search and exclusion filters still apply. Unread totals include hidden articles, and **Mark all as read** still applies to the whole library or selected feed.
+
+Click a filter chip to clear it, or use **Reset filters** to return to All articles. Resetting the view keeps your saved searches and mute rules. Remove individual searches or rules from **Filters**.
+
 ## AI, when you ask
 
 Summaries, discussions, and source checks use your configured Hermes model and search providers. Article text is sent for those actions only; once fetched, normal feed reading stays local. Supporting passages are validated against the fetched article before they are shown.
@@ -122,3 +132,7 @@ An RSS feed can provide an excerpt instead of the full article. Unsubscribing re
 > **Community project**
 >
 > Hermes RSS is an independent community plugin. It is not affiliated with, endorsed by, sponsored by, or officially associated with [Nous Research](https://github.com/NousResearch) or the [Hermes Agent project](https://github.com/NousResearch/hermes-agent). Hermes, Hermes Agent, and Nous Research are names and marks belonging to their respective owners.
+
+## Development checks
+
+Run `node --test tests/filters.cjs` for filter and persistence checks, and `node benchmarks/library.cjs` for library benchmarks. Pass a previous `plugin.js` path to the benchmark to compare timings and behavior against that version. No packages or build step are required.

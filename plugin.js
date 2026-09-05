@@ -293,6 +293,34 @@ function createLibrary(owner, fetchFeed2, transaction = transact) {
   return async (path, { method = "GET", body = {} } = {}) => {
     const url = new URL(path, "https://rss.invalid");
     const parts = url.pathname.split("/").filter(Boolean);
+    if (parts[0] === "filters") {
+      if (method === "GET") return (await read()).filters || { searches: [], mutes: [] };
+      if (!["searches", "mutes"].includes(parts[1])) throw new Error("Unknown filter operation.");
+      return write((library) => {
+        library.filters ||= { searches: [], mutes: [] };
+        const entries = library.filters[parts[1]];
+        if (method === "DELETE") {
+          library.filters[parts[1]] = entries.filter(entry => entry.id !== parts[2]);
+          return;
+        }
+        if (method !== "POST") throw new Error("Unknown filter operation.");
+        if (entries.length >= 50) throw new Error("Keep at most 50 entries of each filter type.");
+        const phrase = value => typeof value === "string" ? value.trim().slice(0, 200) : "";
+        const feed_id = typeof body.feed_id === "string" ? body.feed_id : "";
+        if (feed_id && !library.feeds.some(feed => feed.id === feed_id)) throw new Error("Subscription not found.");
+        const entry = parts[1] === "mutes" ? { phrase: phrase(body.phrase), feed_id } : {
+          name: phrase(body.name), query: phrase(body.query), exclude: phrase(body.exclude), feed_id,
+          view: ["all", "unread", "saved"].includes(body.view) ? body.view : "all",
+          show_hidden: body.show_hidden === true
+        };
+        if (!(entry.phrase || entry.name)) throw new Error("Enter a name or phrase.");
+        if (parts[1] === "mutes" && entries.some(rule => rule.phrase.toLowerCase() === entry.phrase.toLowerCase() && rule.feed_id === feed_id))
+          throw new Error("That mute rule already exists.");
+        entry.id = crypto.randomUUID();
+        entries.push(entry);
+        return entry;
+      });
+    }
     if (parts[0] === "feeds") {
       if (method === "POST" && !parts[1])
         return write((library) => add(library, body));
@@ -382,12 +410,17 @@ function createLibrary(owner, fetchFeed2, transaction = transact) {
         if (!article) throw new Error("Article not found.");
         return article;
       }
-      const library = await read(), q = (url.searchParams.get("q") || "").toLowerCase();
+      const library = await read(), q = (url.searchParams.get("q") || "").trim().toLowerCase();
+      const exclude = (url.searchParams.get("exclude") || "").trim().toLowerCase();
       const view = url.searchParams.get("view"), feed = url.searchParams.get("feed_id");
-      return library.articles.filter(
-        (a) => (!feed || a.feed_id === feed) && (view !== "unread" || !a.is_read) && (view !== "saved" || a.is_saved) && (!q || `${a.title}
-${a.body}`.toLowerCase().includes(q))
-      ).sort(
+      const rules = url.searchParams.get("show_hidden") === "true" ? [] : (library.filters?.mutes || []).map(rule => ({ ...rule, phrase: rule.phrase.toLowerCase() }));
+      return library.articles.filter((a) => {
+        if (feed && a.feed_id !== feed || view === "unread" && a.is_read || view === "saved" && !a.is_saved) return false;
+        if (!q && !exclude && !rules.length) return true;
+        const text = `${a.title}\n${a.body}`.toLowerCase();
+        return (!q || text.includes(q)) && (!exclude || !text.includes(exclude)) &&
+          !rules.some(rule => (!rule.feed_id || rule.feed_id === a.feed_id) && text.includes(rule.phrase));
+      }      ).sort(
         (a, b) => (b.published_at || b.received_at).localeCompare(
           a.published_at || a.received_at
         )
@@ -770,6 +803,11 @@ var styles = `
 .hermes-rss .rss-feed-header-error{margin-top:8px;color:var(--ui-danger,var(--ui-text-secondary))}
 .hermes-rss .rss-settings{padding:18px 28px;border-bottom:1px solid var(--ui-stroke-secondary);display:grid;gap:16px}.hermes-rss .rss-settings h2{font-size:16px;margin:0}.hermes-rss .rss-setting{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.hermes-rss .rss-setting input[type=number]{width:90px}.hermes-rss .rss-setting input[type=checkbox]{accent-color:var(--ui-accent)}
 .hermes-rss .rss-settings-library{display:grid;gap:12px;padding-top:14px;border-top:1px solid var(--ui-stroke-secondary)}
+.hermes-rss .rss-filter-panel{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:18px 28px;border-bottom:1px solid var(--ui-stroke-secondary);max-height:45vh;overflow:auto;flex-shrink:0}
+.hermes-rss .rss-filter-column{display:grid;align-content:start;gap:10px;min-width:0}.hermes-rss .rss-filter-column h2{font-size:16px;margin:0}.hermes-rss .rss-filter-column input{min-width:0;max-width:100%}
+.hermes-rss select{font:inherit;color:inherit;background:var(--ui-bg-primary,var(--background));border:1px solid var(--ui-stroke-secondary);border-radius:5px;padding:7px;max-width:100%}
+.hermes-rss .rss-filter-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.hermes-rss .rss-filter-chips button{max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left}
+@media(max-width:760px){.hermes-rss .rss-filter-panel{grid-template-columns:1fr}}
 .hermes-rss .rss-confirm{padding:16px 28px;border-bottom:1px solid var(--ui-stroke-secondary)}.hermes-rss .rss-confirm h2{font-size:16px}.hermes-rss .rss-confirm .rss-tools{margin-top:12px}
 @media(max-width:1000px){.hermes-rss .rss-layout{grid-template-columns:145px minmax(210px,.85fr) minmax(260px,1fr)}.hermes-rss .rss-detail{padding:22px 20px}.hermes-rss .rss-top{padding:20px}}
 @media(max-width:760px){.hermes-rss .rss-layout{grid-template-columns:125px 1fr}.hermes-rss .rss-detail{display:none}.hermes-rss .rss-layout.has-selection .rss-list{display:none}.hermes-rss .rss-layout.has-selection .rss-detail{display:block}.hermes-rss .rss-top{align-items:flex-start}.hermes-rss .rss-top p{display:none}}
@@ -842,6 +880,12 @@ function ReaderProfile({ ctx, owner }) {
     ctx.storage?.set(`selected:${owner}`, value);
   };
   const [query, setQuery] = useState("");
+  const [exclude, setExclude] = useState("");
+  const [showHidden, setShowHidden] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const [searchName, setSearchName] = useState("");
+  const [mutePhrase, setMutePhrase] = useState("");
+  const [muteFeed, setMuteFeed] = useState("");
   const [tab, setTab] = useState("article");
   const [adding, setAdding] = useState(false);
   const [url, setUrl] = useState("");
@@ -866,10 +910,13 @@ function ReaderProfile({ ctx, owner }) {
     queryFn: () => libraryRequest("/feeds"),
     retry: false
   });
-  const params = new URLSearchParams({ view, q: query, limit: String(limit) });
+  const filters = useQuery({ queryKey: [...key, "filters"], queryFn: () => libraryRequest("/filters"), retry: false });
+  const searches = filters.data?.searches || [];
+  const mutes = filters.data?.mutes || [];
+  const params = new URLSearchParams({ view, q: query, exclude, show_hidden: String(showHidden), limit: String(limit) });
   if (feedId) params.set("feed_id", feedId);
   const articles = useQuery({
-    queryKey: [...key, "articles", feedId, view, query, limit],
+    queryKey: [...key, "articles", feedId, view, query, exclude, showHidden, limit],
     queryFn: () => libraryRequest(`/articles?${params}`),
     retry: false
   });
@@ -913,6 +960,33 @@ function ReaderProfile({ ctx, owner }) {
     setSelected(null);
     setLimit(100);
   };
+  const resetFilters = () => {
+    selectView("all");
+    setQuery(""); setExclude(""); setShowHidden(false);
+  };
+  const openSearch = search => {
+    selectView(search.view, search.feed_id || null);
+    setQuery(search.query); setExclude(search.exclude); setShowHidden(search.show_hidden);
+  };
+  const saveSearch = event => {
+    event.preventDefault();
+    void act("Saving search…", async () => {
+      await libraryRequest("/filters/searches", { method: "POST", body: { name: searchName, query, exclude, feed_id: feedId, view, show_hidden: showHidden } });
+      setSearchName(""); setNotice("Search saved for this profile."); publishLibraryChange(owner);
+    });
+  };
+  const addMute = event => {
+    event.preventDefault();
+    void act("Adding mute rule…", async () => {
+      await libraryRequest("/filters/mutes", { method: "POST", body: { phrase: mutePhrase, feed_id: muteFeed } });
+      setMutePhrase(""); setLimit(100); setSelected(null);
+      setNotice("Mute rule added. Articles stay in your library."); publishLibraryChange(owner);
+    });
+  };
+  const removeFilter = (type, id) => act("Removing filter…", async () => {
+    await libraryRequest(`/filters/${type}/${id}`, { method: "DELETE" });
+    publishLibraryChange(owner);
+  });
   const openArticle = (item) => {
     setSelected(item.id);
     setTab("article");
@@ -1067,6 +1141,7 @@ function ReaderProfile({ ctx, owner }) {
             children: "\u21BB Refresh"
           }
         ),
+        jsx(Button, { variant: "ghost", "aria-expanded": filtersOpen, onClick: () => setFiltersOpen(!filtersOpen), children: "Filters" }),
         jsx(Button, { variant: "ghost", "aria-expanded": settingsOpen, onClick: () => { setDraft(readSettings(ctx, owner)); setSettingsOpen(!settingsOpen); }, children: "Settings" }),
         /* @__PURE__ */ jsx(Button, { onClick: () => setAdding(!adding), disabled, children: "+ Subscribe" })
       ] })
@@ -1074,6 +1149,40 @@ function ReaderProfile({ ctx, owner }) {
     (busy || notice) && jsxs("div", { className: "rss-notice", role: "status", children: [
       jsx("span", { children: busy || notice }),
       notice && jsx("button", { type: "button", className: "rss-notice-close", "aria-label": "Dismiss notification", onClick: () => setNotice(""), children: "×" })
+    ] }),
+    filtersOpen && jsxs("div", { className: "rss-filter-panel", "aria-label": "Filters and saved searches", children: [
+      jsxs("div", { className: "rss-filter-column", children: [
+        jsx("h2", { children: "Current search" }),
+        jsxs("label", { className: "rss-stack", children: ["Exclude phrase", jsx(Input, { value: exclude, maxLength: 200, placeholder: "e.g. promo code", onChange: event => { setExclude(event.target.value); setLimit(100); } })] }),
+        jsx("p", { className: "rss-muted rss-small", children: "Search and exclusion match literal phrases in titles and feed text, ignoring case." }),
+        jsxs("form", { className: "rss-tools", onSubmit: saveSearch, children: [
+          jsx(Input, { "aria-label": "Saved search name", placeholder: "Name this search", value: searchName, maxLength: 200, required: true, onChange: event => setSearchName(event.target.value) }),
+          jsx(Button, { type: "submit", disabled: disabled || !searchName.trim() || filters.isPending || !!filters.error, children: "Save search" })
+        ] }),
+        jsx("p", { className: "rss-muted rss-small", children: "Saves the current phrase, exclusion, feed, view, and show-hidden choice." }),
+        searches.map(search => jsxs("div", { className: "rss-tools", children: [
+          jsx(Button, { variant: "ghost", onClick: () => openSearch(search), children: search.name }),
+          jsx(Button, { variant: "ghost", disabled, "aria-label": `Remove saved search ${search.name}`, onClick: () => removeFilter("searches", search.id), children: "Remove" })
+        ] }, search.id))
+      ] }),
+      jsxs("div", { className: "rss-filter-column", children: [
+        jsx("h2", { children: "Mute rules" }),
+        jsx("p", { className: "rss-muted rss-small", children: "Hide matching titles and feed text in every view. Nothing is deleted or marked read. Unread totals include hidden articles." }),
+        jsxs("form", { className: "rss-stack", onSubmit: addMute, children: [
+          jsx(Input, { "aria-label": "Mute phrase", placeholder: "e.g. coupon", value: mutePhrase, maxLength: 200, required: true, onChange: event => setMutePhrase(event.target.value) }),
+          jsxs("select", { "aria-label": "Mute rule feed", value: muteFeed, onChange: event => setMuteFeed(event.target.value), children: [
+            jsx("option", { value: "", children: "All feeds" }),
+            (feeds.data || []).map(feed => jsx("option", { value: feed.id, children: feed.title }, feed.id))
+          ] }),
+          jsx(Button, { type: "submit", disabled: disabled || !mutePhrase.trim() || filters.isPending || !!filters.error, children: "Add mute rule" })
+        ] }),
+        mutes.map(rule => jsxs("div", { className: "rss-tools", children: [
+          jsx("span", { className: "rss-small", children: `${rule.phrase} · ${rule.feed_id ? (feeds.data || []).find(feed => feed.id === rule.feed_id)?.title || "Removed feed" : "All feeds"}` }),
+          jsx(Button, { variant: "ghost", disabled, "aria-label": `Remove mute rule ${rule.phrase}`, onClick: () => removeFilter("mutes", rule.id), children: "Remove" })
+        ] }, rule.id))
+      ] }),
+      filters.error && jsx("p", { role: "alert", children: filters.error.message }),
+      jsx(Button, { variant: "ghost", onClick: () => setFiltersOpen(false), children: "Close filters" })
     ] }),
     settingsOpen && jsxs("div", { className: "rss-settings", children: [
       jsxs("form", { className: "rss-stack", "aria-label": "Reader settings", onSubmit: saveSettings, children: [
@@ -1184,6 +1293,8 @@ function ReaderProfile({ ctx, owner }) {
           },
           id
         )),
+        searches.length > 0 && jsx("div", { className: "rss-eyebrow", children: "Saved searches" }),
+        searches.map(search => jsx("button", { onClick: () => openSearch(search), title: search.name, children: jsx("span", { className: "rss-feed-name", children: search.name }) }, search.id)),
         /* @__PURE__ */ jsx("div", { className: "rss-eyebrow", children: "Subscriptions" }),
         (feeds.data || []).map(feed => jsxs("div", { className: "rss-feed-row", children: [
           jsxs("button", { className: "rss-feed-open", "aria-current": feedId === feed.id,
@@ -1214,13 +1325,24 @@ function ReaderProfile({ ctx, owner }) {
               }
             }
           ),
+          jsxs("div", { className: "rss-filter-chips", "aria-label": "Active filters", children: [
+            query && jsx(Button, { size: "sm", variant: "outline", "aria-label": "Clear search phrase", onClick: () => { setQuery(""); setLimit(100); }, children: `Search: ${query} ×` }),
+            exclude && jsx(Button, { size: "sm", variant: "outline", "aria-label": "Clear excluded phrase", onClick: () => { setExclude(""); setLimit(100); }, children: `Exclude: ${exclude} ×` }),
+            feedId && jsx(Button, { size: "sm", variant: "outline", "aria-label": "Clear feed filter", onClick: () => selectView(view), children: `${chosenFeed?.title || "Removed feed"} ×` }),
+            view !== "all" && jsx(Button, { size: "sm", variant: "outline", "aria-label": "Clear view filter", onClick: () => selectView("all", feedId), children: `${view === "saved" ? "Saved" : "Unread"} ×` }),
+            (mutes.length > 0 || showHidden) && jsxs("label", { className: "rss-setting rss-small", children: [
+              jsx("input", { type: "checkbox", checked: showHidden, onChange: event => { setShowHidden(event.target.checked); setLimit(100); } }),
+              `Show hidden articles${mutes.length ? ` (${mutes.length} mute rules)` : ""}`
+            ] }),
+            (query || exclude || feedId || view !== "all" || showHidden) && jsx(Button, { size: "sm", variant: "ghost", onClick: resetFilters, children: "Reset filters" })
+          ] }),
           /* @__PURE__ */ jsxs("p", { className: "rss-muted rss-small", style: { marginTop: 10 }, children: [
             chosenFeed?.title || (view === "saved" ? "Saved for later" : view === "unread" ? "Unread articles" : "All articles"),
             " ",
             "\xB7 ",
             articles.data?.length || 0
           ] }),
-          jsx(Button, { variant: "ghost", size: "sm", disabled: disabled || !(feeds.data || []).some(f => (!feedId || f.id === feedId) && f.unread > 0) && !articles.data?.some(a => !a.is_read), onClick: markAllRead, children: feedId ? "Mark feed as read" : "Mark all as read" }),
+          jsx(Button, { variant: "ghost", size: "sm", disabled: disabled || !(feeds.data || []).some(f => (!feedId || f.id === feedId) && f.unread > 0) && !articles.data?.some(a => !a.is_read), onClick: markAllRead, title: "Includes hidden articles and articles outside the current search.", children: feedId ? "Mark feed as read" : "Mark all as read" }),
           chosenFeed?.error && /* @__PURE__ */ jsx("p", { role: "status", className: "rss-small rss-feed-header-error", children: chosenFeed.error })
         ] }),
         /* @__PURE__ */ jsxs("div", { className: "rss-list-items", children: [
@@ -1229,19 +1351,20 @@ function ReaderProfile({ ctx, owner }) {
             /* @__PURE__ */ jsx(Button, { onClick: refresh, children: "Retry" })
           ] }),
           !feeds.error && !articles.error && articles.isPending && /* @__PURE__ */ jsx(Empty, { title: "Loading your library\u2026" }),
-          !articles.isPending && !articles.error && !articles.data?.length && /* @__PURE__ */ jsxs(
-            Empty,
-            {
-              title: feeds.data?.length ? "Nothing here yet" : "Make room for good reading",
-              children: [
-                /* @__PURE__ */ jsx("p", { children: feeds.data?.length ? "Refresh your feeds, or try another filter." : "Subscribe to a feed or bring your existing subscriptions with OPML. Your library stays in this desktop, separated by Hermes profile." }),
-                /* @__PURE__ */ jsxs("div", { className: "rss-tools", style: { justifyContent: "center" }, children: [
-                  /* @__PURE__ */ jsx(Button, { variant: "outline", onClick: () => setAdding(true), children: "Add your first feed" }),
-                  !feeds.data?.length && /* @__PURE__ */ jsx(Button, { variant: "ghost", disabled, onClick: chooseFile, children: "Import OPML" })
+          !articles.isPending && !articles.error && !feeds.error && !articles.data?.length && jsxs(Empty, {
+            title: query || exclude || feedId || mutes.length && !showHidden ? "No matching articles" : view === "saved" ? "No saved articles yet" : view === "unread" ? "You're all caught up" : feeds.data?.length ? "No articles yet" : "Make room for good reading",
+            children: [
+              jsx("p", { children: query || exclude || feedId || mutes.length && !showHidden ? (mutes.length && !showHidden ? "Try clearing a filter or showing articles hidden by mute rules." : "Try a different phrase or clear a filter to see more articles.") : view === "saved" ? "Save an article to find it here later." : view === "unread" ? "There are no unread articles in this view." : feeds.data?.length ? "Refresh your feeds to fetch articles." : "Subscribe to a feed or import your subscriptions with OPML." }),
+              jsxs("div", { className: "rss-tools", style: { justifyContent: "center" }, children: [
+                (query || exclude || feedId || view !== "all") && jsx(Button, { variant: "outline", onClick: resetFilters, children: "Clear filters" }),
+                mutes.length > 0 && !showHidden && jsx(Button, { variant: "outline", onClick: () => { setShowHidden(true); setLimit(100); }, children: "Show hidden articles" }),
+                !feeds.data?.length && !query && !exclude && !feedId && view === "all" && jsxs(Fragment, { children: [
+                  jsx(Button, { variant: "outline", onClick: () => setAdding(true), children: "Add your first feed" }),
+                  jsx(Button, { variant: "ghost", disabled, onClick: chooseFile, children: "Import OPML" })
                 ] })
-              ]
-            }
-          ),
+              ] })
+            ]
+          }),
           (articles.data || []).map((item) => /* @__PURE__ */ jsxs(
             "button",
             {
