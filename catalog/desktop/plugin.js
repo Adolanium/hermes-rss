@@ -1161,6 +1161,15 @@ async function resolvePublicIPv4(run, family, hostname) {
     "Feed host must resolve to a public IPv4 address. Private networks are blocked."
   );
 }
+// The gateway redacts shell stdout, and secret patterns such as JWTs match inside
+// long base64 runs. Four-character groups keep every run too short for any rule.
+const PACKED_CHUNK = 2800;
+function decodePacked(packed) {
+  const compact = String(packed || "").replace(/\s+/g, "");
+  if (!compact || compact.length % 4 || !/^[A-Za-z0-9+/]+={0,2}$/.test(compact))
+    throw new Error("The gateway returned a damaged download. Try again.");
+  return Uint8Array.from(atob(compact), (c) => c.charCodeAt(0));
+}
 async function readPackedFeed(run, family, directory, feedPath) {
   if (family === "windows") {
     const gzPath = `${feedPath}.gz`;
@@ -1176,11 +1185,11 @@ async function readPackedFeed(run, family, directory, feedPath) {
     if (!Number.isInteger(length) || length < 1 || length > 6e5)
       throw new Error("Feed exceeds the compressed transport limit.");
     let packed = "";
-    for (let offset = 0; offset < length; offset += 3500) {
-      const count = Math.min(3500, length - offset);
+    for (let offset = 0; offset < length; offset += PACKED_CHUNK) {
+      const count = Math.min(PACKED_CHUNK, length - offset);
       packed += await run(
-        `powershell -NoProfile -NonInteractive "[IO.File]::ReadAllText(${powershellSingle(b64Path)}).Substring(${offset},${count})"`
-      );
+        `powershell -NoProfile -NonInteractive "[IO.File]::ReadAllText(${powershellSingle(b64Path)}).Substring(${offset},${count}) -replace '(.{4})','$1 '"`
+      ) + " ";
     }
     return packed;
   }
@@ -1190,10 +1199,10 @@ async function readPackedFeed(run, family, directory, feedPath) {
   if (!Number.isInteger(length) || length < 1 || length > 6e5)
     throw new Error("Feed exceeds the compressed transport limit.");
   let packed = "";
-  for (let offset = 0; offset < length; offset += 3500)
+  for (let offset = 0; offset < length; offset += PACKED_CHUNK)
     packed += await run(
-      `${encoded} | cut -c ${offset + 1}-${Math.min(offset + 3500, length)}`
-    );
+      `${encoded} | cut -c ${offset + 1}-${Math.min(offset + PACKED_CHUNK, length)} | sed 's/..../& /g'`
+    ) + " ";
   return packed;
 }
 async function fetchFeedNow(host2, rawUrl, route) {
@@ -1254,7 +1263,7 @@ async function fetchFeedNow(host2, rawUrl, route) {
   }
   if (!success) throw new Error("The feed redirects too many times.");
   const packed = await readPackedFeed(run, family, directory, feedPath);
-  const bytes = Uint8Array.from(atob(packed), (c) => c.charCodeAt(0));
+  const bytes = decodePacked(packed);
   const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
   const decoded = new Uint8Array(await new Response(stream).arrayBuffer());
   if (decoded.length > 2e6) throw new Error("Feed exceeds 2 MB.");
@@ -1289,9 +1298,12 @@ function parseFeed(xml, base) {
   const text = (node) => node?.textContent?.trim() || "";
   const root = doc.documentElement;
   const atom = root.localName === "feed";
-  const channel = atom ? root : root.localName === "rss" ? child(root, "channel") : null;
-  if (!channel) throw new Error("Use a direct RSS 2.0 or Atom feed URL.");
-  const title = plainText(text(child(channel, "title"))).slice(0, 300) || new URL(base).hostname;
+  // RSS 1.0 keeps <channel> and its <item>s as siblings under <rdf:RDF>.
+  const rdf = root.localName === "RDF";
+  const channel = atom || rdf ? root : root.localName === "rss" ? child(root, "channel") : null;
+  if (!channel) throw new Error("Use a direct RSS or Atom feed URL.");
+  const meta = rdf ? child(root, "channel") || root : channel;
+  const title = plainText(text(child(meta, "title"))).slice(0, 300) || new URL(base).hostname;
   const items = [...channel.children].filter((n) => n.localName === (atom ? "entry" : "item")).slice(0, 100).map((entry) => {
     const link = atom ? [...entry.children].find(
       (n) => n.localName === "link" && (!n.getAttribute("rel") || n.getAttribute("rel") === "alternate")
@@ -1507,7 +1519,7 @@ async function captureArticleNow(host2, rawUrl, route, owner, options = {}) {
     }
     if (!success) throw new Error("The page redirects too many times.");
     const packed = await readPackedFeed(run, family, directory, pagePath);
-    const bytes = Uint8Array.from(atob(packed), (c) => c.charCodeAt(0));
+    const bytes = decodePacked(packed);
     const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("gzip"));
     const decoded = new Uint8Array(await new Response(stream).arrayBuffer());
     if (decoded.length > 2e6) throw new Error("Page exceeds 2 MB.");

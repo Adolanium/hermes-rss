@@ -34,7 +34,7 @@ Most feed readers stop at a list of headlines. Hermes RSS gives each story a nex
 
 | | |
 | --- | --- |
-| **Read**<br />Subscribe to RSS 2.0 and Atom feeds, search your library, and open the original article. | **Remember**<br />Save the stories worth keeping, mark one feed or everything as read, and return to them across Hermes restarts. |
+| **Read**<br />Subscribe to RSS 2.0, RSS 1.0 (RDF) and Atom feeds, search your library, and open the original article. | **Remember**<br />Save the stories worth keeping, mark one feed or everything as read, and return to them across Hermes restarts. |
 | **Understand**<br />Ask for a concise summary with supporting passages from the fetched article. | **Investigate**<br />Open a native Hermes chat to discuss a story or find more sources for a claim. |
 
 Summaries and source checks run when requested. Optional automatic grading sends article excerpts to your configured Hermes model after refresh; it is off by default.
@@ -54,7 +54,7 @@ The result is a library that gets quieter as you use it.
 
 ## Built for real feeds, not a demo list
 
-Hermes RSS is a single desktop plugin with its own **RSS** category in Hermes. It supports RSS 2.0 and Atom feeds, keeps article history locally, and works with stock Hermes Desktop. There is no fork, upstream patch, separate backend, build step, or package manager.
+Hermes RSS is a single desktop plugin with its own **RSS** category in Hermes. It supports RSS 2.0, RSS 1.0 (RDF) and Atom feeds, keeps article history locally, and works with stock Hermes Desktop. There is no fork, upstream patch, separate backend, build step, or package manager.
 
 ## Make it yours
 

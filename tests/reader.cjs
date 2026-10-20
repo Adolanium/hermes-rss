@@ -121,6 +121,52 @@ for (const file of ['plugin.js', 'catalog/desktop/plugin.js']) {
     assert.equal(writes, 0);
   });
 
+  test(`${file}: RSS 1.0 (RDF) feeds list sibling items with the channel title`, () => {
+    const api = setup();
+    const xml = `<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"
+  xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+  <channel rdf:about="https://journal.example/rss"><title>Journal &amp; Letters</title><link>https://journal.example/</link>
+    <items><rdf:Seq><rdf:li rdf:resource="https://journal.example/a/1"/></rdf:Seq></items></channel>
+  <item rdf:about="https://journal.example/a/1"><title>First paper</title><link>https://journal.example/a/1</link>
+    <description>Abstract one</description><dc:date>2026-10-19T08:00:00Z</dc:date></item>
+  <item rdf:about="https://journal.example/a/2"><title>Second paper</title><link>/a/2</link>
+    <content:encoded><![CDATA[<p>Full text two</p>]]></content:encoded></item>
+</rdf:RDF>`;
+    const feed = json(api.parseFeed(xml, 'https://journal.example/rss'));
+    assert.equal(feed.title, 'Journal & Letters');
+    assert.deepEqual(feed.items.map(item => item.title), ['First paper', 'Second paper']);
+    assert.deepEqual(feed.items.map(item => item.url), ['https://journal.example/a/1', 'https://journal.example/a/2']);
+    assert.equal(feed.items[0].published_at, '2026-10-19T08:00:00.000Z');
+    assert.match(feed.items[1].body, /Full text two/);
+    assert.throws(() => api.parseFeed('<html><body/></html>', 'https://journal.example/'), /RSS or Atom/);
+  });
+
+  test(`${file}: packed downloads survive grouped transport and reject redacted payloads`, async () => {
+    const api = setup(), xml = '<rss><channel><title>T</title></channel></rss>';
+    const b64 = gzipSync(xml).toString('base64');
+    const grouped = b64.replace(/(.{4})/g, '$1 ');
+    assert.equal(Buffer.from(api.decodePacked(grouped)).toString('base64'), b64);
+    assert.throws(() => api.decodePacked(b64.slice(0, 8) + '...' + b64.slice(48)), /damaged download/);
+    assert.throws(() => api.decodePacked(b64.slice(1)), /damaged download/);
+    const commands = [];
+    const long = 'A'.repeat(6000);
+    const posix = async command => {
+      commands.push(command);
+      if (command.endsWith('| wc -c')) return String(long.length);
+      const [, from, to] = /cut -c (\d+)-(\d+)/.exec(command);
+      return long.slice(from - 1, to).replace(/(.{4})/g, '$1 ').trim();
+    };
+    const packed = await api.readPackedFeed(posix, 'posix', '/tmp/hermes-rss.ABCDEFGH', '/tmp/hermes-rss.ABCDEFGH/feed');
+    assert.ok(commands.slice(1).every(command => command.endsWith("| sed 's/..../& /g'")));
+    assert.ok(packed.split(/\s+/).every(group => group.length <= 4), 'no run longer than four characters crosses a chunk');
+    assert.equal(packed.replace(/\s+/g, ''), long);
+    const windows = [];
+    await api.readPackedFeed(async command => { windows.push(command); return command.endsWith('.Length"') ? '4' : 'AAAA'; },
+      'windows', 'C:\Temp\hermes-rss.ABCDEFGH', 'C:\Temp\hermes-rss.ABCDEFGH\feed');
+    assert.ok(windows.some(command => command.includes("-replace '(.{4})','$1 '")));
+  });
+
   test(`${file}: Windows compressed capture files belong to each download`, async () => {
     const api = setup(), commands = [];
     const run = async command => { commands.push(command); return command.endsWith('.Length"') ? '4' : 'AAAA'; };
