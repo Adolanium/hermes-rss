@@ -70,6 +70,40 @@ for (const file of ['plugin.js', 'catalog/desktop/plugin.js']) {
     assert.equal(new Set(files).size, 2);
   });
 
+  // A 0.22 gateway requires params.session_id; the older sidecar refuses it.
+  function gateway(mode, session) {
+    const h = transport(() => '200 600 '), sent = [];
+    const request = h.host.requestProfile;
+    let current = session;
+    h.host.state.focusedSessionId = { get: () => current };
+    h.host.requestProfile = async (route, method, params) => {
+      sent.push(Object.keys(params).sort().join(','));
+      if (mode() === 'scoped' && !params.session_id) throw new Error('invalid_params');
+      if (mode() === 'sidecar' && 'session_id' in params) throw new Error('invalid params for shell.exec: session_id: Extra inputs are not permitted');
+      return request(route, method, params);
+    };
+    return { ...h, sent, switchTo: id => { current = id; } };
+  }
+  test(`${file}: shell.exec sends the focused session to a session-scoped gateway`, async () => {
+    const g = gateway(() => 'scoped', 'session-a');
+    await g.api.captureArticle(g.host, 'https://example.com/article');
+    assert.ok(g.sent.length > 1);
+    assert.ok(g.sent.every(keys => keys === 'command,session_id'));
+    g.switchTo('');
+    await assert.rejects(g.api.captureArticle(g.host, 'https://example.com/other'), /Open a chat/);
+  });
+  test(`${file}: shell.exec falls back to bare params once on a sidecar gateway`, async () => {
+    let mode = 'sidecar';
+    const g = gateway(() => mode, 'session-a');
+    await g.api.captureArticle(g.host, 'https://example.com/article');
+    assert.deepEqual(g.sent.slice(0, 2), ['command,session_id', 'command']);
+    assert.ok(g.sent.slice(2).every(keys => keys === 'command'), 'the refusal is remembered for the profile');
+    mode = 'scoped';
+    g.sent.length = 0;
+    await g.api.captureArticle(g.host, 'https://example.com/second');
+    assert.deepEqual(g.sent.slice(0, 2), ['command', 'command,session_id'], 'an upgraded gateway gets the session again');
+  });
+
   test(`${file}: captured content survives refresh/reopen but never crosses a changed URL`, async () => {
     const api = setup();
     let state = { feeds: [{ id: 'feed' }], articles: [{ id: 'a', identity: 'a', feed_id: 'feed', title: 'Old', url: 'https://example.com/a', body: 'excerpt', actions: [], is_saved: true }] };

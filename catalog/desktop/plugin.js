@@ -302,7 +302,7 @@ async function gradingShell(host2, expectedOwner) {
   if (expectedOwner && owner !== expectedOwner) throw new Error("Profile changed before grading.");
   const run = async (command) => {
     assertOwner(host2, route);
-    const result = await host2.requestProfile(route, "shell.exec", { command });
+    const result = await shellExec(host2, route, command);
     assertOwner(host2, route);
     return result.code === 0 ? String(result.stdout || "").trim() : "";
   };
@@ -1082,6 +1082,36 @@ var posixQuote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
 var cmdQuote = (value) => `"${String(value).replaceAll('"', '""')}"`;
 var families = /* @__PURE__ */ new Map();
 var caches = /* @__PURE__ */ new Map();
+var bareShell = /* @__PURE__ */ new Set();
+// Hermes 0.22 gateways serve the session-scoped shell.exec and answer
+// invalid_params when params.session_id is missing. Older gateways run the
+// sidecar variant, whose closed params refuse session_id, so retry bare once
+// and remember that for the profile. The session is read on every call because
+// the page can outlive a session switch.
+async function shellExec(host2, route, command) {
+  const owner = JSON.stringify([route.connectionId, route.profile]);
+  const reason = (error) => String(error?.message || error || "");
+  const session_id = oneshotSessionId(host2);
+  if (session_id && !bareShell.has(owner)) {
+    try {
+      return await host2.requestProfile(route, "shell.exec", { command, session_id });
+    } catch (error) {
+      if (!/invalid[ _]params|extra[ _]forbidden|extra inputs/i.test(reason(error))) throw error;
+    }
+  }
+  try {
+    const result = await host2.requestProfile(route, "shell.exec", { command });
+    if (session_id) bareShell.add(owner);
+    return result;
+  } catch (error) {
+    if (!/invalid[ _]params/i.test(reason(error))) throw error;
+    if (!session_id)
+      throw new Error("This gateway runs feed commands inside a chat session. Open a chat, then refresh again.");
+    // The gateway was upgraded since the bare call was remembered.
+    if (!bareShell.delete(owner)) throw error;
+    return host2.requestProfile(route, "shell.exec", { command, session_id });
+  }
+}
 var pendingFetches = /* @__PURE__ */ new Map();
 function powershellSingle(value) {
   if (/['\r\n]/.test(value))
@@ -1208,7 +1238,7 @@ async function readPackedFeed(run, family, directory, feedPath) {
 async function fetchFeedNow(host2, rawUrl, route) {
   const run = async (command, optional) => {
     assertOwner(host2, route);
-    const result = await host2.requestProfile(route, "shell.exec", { command });
+    const result = await shellExec(host2, route, command);
     assertOwner(host2, route);
     if (result.code !== 0) {
       if (optional) return "";
@@ -1465,7 +1495,7 @@ function extractReadable(html, options = {}) {
 async function captureArticleNow(host2, rawUrl, route, owner, options = {}) {
   const run = async (command, optional) => {
     assertOwner(host2, route);
-    const result = await host2.requestProfile(route, "shell.exec", { command });
+    const result = await shellExec(host2, route, command);
     assertOwner(host2, route);
     if (result.code !== 0) {
       if (optional) return "";
