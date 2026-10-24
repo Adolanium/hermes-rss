@@ -176,6 +176,27 @@ for (const file of ['plugin.js', 'catalog/desktop/plugin.js']) {
     assert.throws(() => api.parseFeed('<html><body/></html>', 'https://journal.example/'), /RSS or Atom/);
   });
 
+  test(`${file}: quoted markup in article bodies is not a DTD`, () => {
+    const api = setup();
+    const item = '<item><title>HTML snippet</title><link>https://blog.example/a</link>'
+      + '<content:encoded><![CDATA[<pre>&lt;!DOCTYPE html&gt;</pre><!DOCTYPE html><!ENTITY x "y">]]></content:encoded></item>';
+    const rss = `<?xml version="1.0"?>\n<!-- feed --><rss xmlns:content="http://purl.org/rss/1.0/modules/content/"><channel><title>Blog</title>${item}</channel></rss>`;
+    const feed = json(api.parseFeed(rss, 'https://blog.example/feed'));
+    assert.deepEqual(feed.items.map(entry => entry.title), ['HTML snippet']);
+    assert.match(feed.items[0].body, /DOCTYPE html/);
+    const dtd = '<!DOCTYPE rss [<!ENTITY a "aaaa">]>';
+    for (const xml of [
+      `${dtd}<rss><channel><title>&a;</title></channel></rss>`,
+      `\uFEFF<?xml version="1.0"?>\n<?xml-stylesheet href="s.xsl"?>\n<!-- <rss> -->\n${dtd}<rss/>`,
+      '<!ENTITY a "aaaa"><rss/>',
+      '<!doctype rss><rss/>'
+    ]) assert.throws(() => api.parseFeed(xml, 'https://blog.example/feed'), /Unsafe/, xml);
+    const opml = '<?xml version="1.0"?><opml version="2.0"><head><title>Feeds</title></head><body>'
+      + '<!-- exported from <!DOCTYPE html> pages --><outline text="Blog" xmlUrl="https://blog.example/feed"/></body></opml>';
+    assert.deepEqual(json(api.parseOpml(opml)).map(entry => entry.url), ['https://blog.example/feed']);
+    assert.throws(() => api.parseOpml('<!DOCTYPE opml [<!ENTITY a "a">]><opml/>'), /Unsafe/);
+  });
+
   test(`${file}: packed downloads survive grouped transport and reject redacted payloads`, async () => {
     const api = setup(), xml = '<rss><channel><title>T</title></channel></rss>';
     const b64 = gzipSync(xml).toString('base64');

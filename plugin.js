@@ -603,8 +603,24 @@ function mergeFeed(library, feedId, parsed) {
   pruneArticleCache(library);
   return { added, fresh: fresh.map((a) => ({ id: a.id, url: a.url })) };
 }
+// A DTD can only sit in the prolog, before the root element. Skip the XML
+// declaration, processing instructions and comments, then look at the first
+// real markup. Article bodies that quote "<!DOCTYPE html>" inside CDATA or
+// comments are text, not a DTD.
+function prologDeclaresDtd(xml) {
+  let i = 0;
+  for (;;) {
+    while (i < xml.length && /[\s\uFEFF]/.test(xml[i])) i++;
+    const close = xml.startsWith("<?", i) ? "?>" : xml.startsWith("<!--", i) ? "-->" : "";
+    if (!close) return /^<!(DOCTYPE|ENTITY)/i.test(xml.slice(i, i + 9));
+    const at = xml.indexOf(close, i + 2);
+    // An unterminated prolog item never reaches a root element, so the parser rejects it.
+    if (at < 0) return false;
+    i = at + close.length;
+  }
+}
 function parseOpml(content) {
-  if (content.length > 2e6 || /<!DOCTYPE|<!ENTITY/i.test(content))
+  if (content.length > 2e6 || prologDeclaresDtd(content))
     throw new Error("Unsafe or oversized OPML.");
   const doc = new DOMParser().parseFromString(content, "text/xml");
   if (doc.querySelector("parsererror") || doc.documentElement.localName !== "opml")
@@ -1312,7 +1328,7 @@ function plainText(raw) {
   return template.content.textContent.replace(/[^\S\n]+/g, " ").replace(/\n\s*\n/g, "\n\n").trim();
 }
 function parseFeed(xml, base) {
-  if (xml.length > 2e6 || /<!DOCTYPE|<!ENTITY/i.test(xml))
+  if (xml.length > 2e6 || prologDeclaresDtd(xml))
     throw new Error("Unsafe or oversized XML.");
   const doc = new DOMParser().parseFromString(xml, "text/xml");
   if (doc.querySelector("parsererror"))
