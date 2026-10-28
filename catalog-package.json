@@ -1,6 +1,6 @@
 {
   "name": "hermes-rss",
-  "version": "0.0.3",
+  "version": "0.0.5",
   "description": "Read RSS and Atom feeds and discuss articles in Hermes Desktop.",
   "updater": "none",
   "companions": []
