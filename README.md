@@ -11,7 +11,7 @@
   Hermes RSS turns one noisy stream into a calm reading room for the stories you mean to understand.
   Keep your reading library local, then bring in Hermes when a story deserves a summary, a conversation, or a source check.
 
-  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.0.2</sub>
+  <sub>POWERED BY <a href="https://github.com/NousResearch/hermes-agent">HERMES AGENT</a> &nbsp;·&nbsp; COMMUNITY PLUGIN &nbsp;·&nbsp; VERSION 0.0.6</sub>
 
   <br /><br />
 
@@ -195,7 +195,7 @@ continue to use the existing root files.
 For development, edit the root files, then run `python scripts/build_catalog.py`.
 Commit the resulting `catalog/` files. CI runs `python scripts/build_catalog.py --check`
 to keep the package current, including any companion files. Catalog packaging
-releases use `catalog-v0.0.3` and are not marked as the latest standalone release.
+releases use `catalog-v0.0.6` and are not marked as the latest standalone release.
 
 ## Contributions
 
